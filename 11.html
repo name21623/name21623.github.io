@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>全屏对角流星</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>
+html,body{margin:0;padding:0;width:100vw;height:100vh;overflow:hidden;background:#000;-webkit-text-size-adjust:none;text-size-adjust:none}
+canvas{display:block;width:100%;height:100%;vertical-align:top}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<script>
+/* ====== 基础画布 ====== */
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+function resize(){
+    const dpr=window.devicePixelRatio||1;
+    c.width=Math.floor(innerWidth*dpr);
+    c.height=Math.floor(innerHeight*dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+resize();addEventListener('resize',resize);
+
+/* ====== 背景星星（静止，最底层） ====== */
+const stars=[];
+function createStars(){
+    stars.length=0;
+    for(let i=0;i<300;i++){
+        stars.push({
+            x:Math.random()*innerWidth,
+            y:Math.random()*innerHeight*0.6,   // 只在上 60% 区域
+            r:Math.random()*1.2+0.3,
+            b:Math.random()*0.5+0.5
+        });
+    }
+}
+createStars();
+function drawStars(){
+    stars.forEach(s=>{
+        ctx.beginPath();
+        ctx.arc(s.x,s.y,s.r,0,Math.PI*2);
+        ctx.fillStyle=`rgba(255,245,230,${s.b})`;
+        ctx.fill();
+    });
+}
+
+/* ====== 远山（更圆滑的四次贝塞尔，中间层） ====== */
+let mountainPoints = [];
+function buildMountain() {
+    mountainPoints = [];
+    const seg = 24,                      // 控制点越多越圆滑
+          baseH = innerHeight * 0.75;
+    // 先随机生成控制点
+    for (let i = 0; i <= seg; i++) {
+        const x = (innerWidth / seg) * i;
+        const y = baseH + (Math.random() - 0.5) * innerHeight * 0.22
+                 + Math.sin(i * 0.6) * 50
+                 + Math.sin(i * 1.9) * 25;
+        mountainPoints.push({x, y});
+    }
+    // 用四次贝塞尔做平滑（cubic，每 4 点一组）
+    function cubic(p0, p1, p2, p3, t) {
+        const t2 = t * t, t3 = t2 * t;
+        const mt = 1 - t, mt2 = mt * mt, mt3 = mt2 * mt;
+        return {
+            x: mt3 * p0.x + 3 * mt2 * t * p1.x + 3 * mt * t2 * p2.x + t3 * p3.x,
+            y: mt3 * p0.y + 3 * mt2 * t * p1.y + 3 * mt * t2 * p2.y + t3 * p3.y
+        };
+    }
+    const smooth = [];
+    for (let i = 0; i < mountainPoints.length - 3; i += 3) {
+        const p0 = mountainPoints[i],
+              p1 = mountainPoints[i + 1],
+              p2 = mountainPoints[i + 2],
+              p3 = mountainPoints[i + 3];
+        smooth.push(p0);
+        for (let t = 0.1; t < 1; t += 0.1) smooth.push(cubic(p0, p1, p2, p3, t));
+    }
+    smooth.push(mountainPoints[mountainPoints.length - 1]);
+    mountainPoints = smooth;
+}
+buildMountain();
+
+function drawMountains() {
+    ctx.fillStyle = '#0a0a1a';
+    ctx.beginPath();
+    ctx.moveTo(0, innerHeight);
+    mountainPoints.forEach(p => ctx.lineTo(p.x, p.y));
+    ctx.lineTo(innerWidth, innerHeight);
+    ctx.closePath();
+    ctx.fill();
+}
+
+/* ========== 流星 ========== */
+const meteors = [],
+      AUTO_METEOR_RGB = '255,255,153',   // 自动流星固定金色
+      colorPalette = [                // 点击流星调色盘
+          [255,182,193],[135,206,235],[152,251,152],
+          [255,215,0],[255,165,0],[216,191,216],[255,228,225]
+      ];
+
+class Meteor {
+    /**
+     * isAuto = true  → 自动流星（左侧边缘，固定金色）
+     * isAuto = false → 点击流星（全屏随机，彩色）
+     */
+    constructor(isAuto = true) {
+        if (isAuto) {
+            this.x = -10 - Math.random() * 40;               // 左侧边缘外
+            this.y = Math.random() * innerHeight * 0.35;     // 上半屏
+            const targetX = innerWidth * 0.75 + Math.random() * innerWidth * 0.25,
+                  targetY = innerHeight * 0.55 + Math.random() * innerHeight * 0.25;
+            const dx = targetX - this.x,
+                  dy = targetY - this.y,
+                  dist = Math.hypot(dx, dy),
+                  spd  = 4 + Math.random() * 3;
+            this.vx = (dx / dist) * spd;
+            this.vy = (dy / dist) * spd;
+            this.rgb = AUTO_METEOR_RGB;
+        } else {
+            this.x = Math.random() * innerWidth;             // 全屏随机
+            this.y = Math.random() * innerHeight * 0.35;
+            const targetX = this.x < innerWidth / 2
+                ? innerWidth * 0.75 + Math.random() * innerWidth * 0.25
+                : Math.random() * innerWidth * 0.25;
+            const targetY = innerHeight * 0.55 + Math.random() * innerHeight * 0.25;
+            const dx = targetX - this.x,
+                  dy = targetY - this.y,
+                  dist = Math.hypot(dx, dy),
+                  spd  = 4 + Math.random() * 3;
+            this.vx = (dx / dist) * spd;
+            this.vy = (dy / dist) * spd;
+            this.rgb = colorPalette[Math.floor(Math.random() * colorPalette.length)].join(',');
+        }
+        this.life = 1;
+    }
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= 0.003;
+    }
+    draw() {
+        const grad = ctx.createLinearGradient(
+            this.x, this.y,
+            this.x - this.vx * 50, this.y - this.vy * 50
+        );
+        grad.addColorStop(0, `rgba(${this.rgb},${this.life})`);
+        grad.addColorStop(1, `rgba(${this.rgb},0)`);
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y);
+        ctx.lineTo(this.x - this.vx * 50, this.y - this.vy * 50);
+        ctx.stroke();
+    }
+    isDead() {
+        return this.x > innerWidth + 50 ||
+               this.y > innerHeight + 50 ||
+               this.life <= 0;
+    }
+}
+
+/* ========== 自动发射调度 ========== */
+function autoFire() {
+    const count = 1 + Math.floor(Math.random() * 3),   // 1~3颗
+          delay = Math.random() * 1000;                // 0~1秒
+    for (let i = 0; i < count; i++) {
+        setTimeout(() => meteors.push(new Meteor(true)), i * 80);
+    }
+    setTimeout(autoFire, delay);
+}
+autoFire();
+
+/* ========== 保留点击发射：起点同自动流星（左侧边缘外） ========== */
+c.addEventListener('click', () => {
+    // 新建一颗“点击流星”，但强制使用自动流星的起点逻辑
+    const m = new Meteor(true);   // 先拿自动流星的构造函数
+    // 再把颜色改回随机彩色
+    m.rgb = colorPalette[Math.floor(Math.random() * colorPalette.length)].join(',');
+    meteors.push(m);
+});
+
+/* ========== 右键烟花 ========== */
+c.addEventListener('contextmenu', (e) => {
+    e.preventDefault();                       // 禁用系统右键菜单
+    const rect = c.getBoundingClientRect(),
+          x = e.clientX - rect.left,
+          y = e.clientY - rect.top;
+
+    const count = 12 + Math.floor(Math.random() * 7); // 12~18条
+    for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.3,
+              spd   = 3 + Math.random() * 2.5;        // 速度随机
+        const vx = Math.cos(angle) * spd,
+              vy = Math.sin(angle) * spd;
+
+        // 用自动流星类，但把起点设为鼠标位置，颜色随机
+        const p = new Meteor(true);
+        p.x  = x;
+        p.y  = y;
+        p.vx = vx;
+        p.vy = vy;
+        p.rgb = colorPalette[Math.floor(Math.random() * colorPalette.length)].join(',');
+        p.life = 1;                   // 1 秒寿命
+        meteors.push(p);
+    }
+});
+
+/* ========== 主循环（绘制顺序：星星→流星→山） ========== */
+function animate() {
+    ctx.fillStyle = '#02040c';
+    ctx.fillRect(0, 0, innerWidth, innerHeight);
+
+    drawStars();      // ① 最底层：星星
+
+    /* ② 山后流星：自动 + 点击 */
+    meteors.forEach((m, i) => {
+        m.update();
+        m.draw();
+        if (m.isDead()) meteors.splice(i, 1);
+    });
+
+    drawMountains();  // ③ 最上层：圆滑远山
+
+    requestAnimationFrame(animate);
+}
+animate();
+</script>
+</body>
+</html>
